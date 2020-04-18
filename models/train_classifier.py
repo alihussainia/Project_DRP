@@ -1,91 +1,91 @@
-
-# import libraries
-import sys
-from sqlalchemy import create_engine
+import sys, pickle, re
 import pandas as pd
+import numpy as np
 import nltk
-nltk.download(['punkt','wordnet','stopwords'])
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
-from nltk.corpus import stopwords
-import re
-import pickle
-
-from sklearn.multioutput import MultiOutputClassifier
-
-from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline, FeatureUnion
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.multioutput import MultiOutputClassifier
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
-from sklearn.metrics import fbeta_score, make_scorer, accuracy_score
+from sklearn.model_selection import GridSearchCV
+from sqlalchemy import create_engine
+#nltk.download(['punkt', 'wordnet'])
 
 def load_data(database_filepath):
-    filename = 'sqlite:///{}'.format(database_filepath)
-    engine = create_engine(filename)
-    df = pd.read_sql('Messages',engine)
-    X = df['message']
-    Y = df.drop(['id', 'message', 'original', 'genre'],  axis=1).astype(float)
-    category = Y.columns.values
-    return X, Y, category
+    '''
+    Fucntion to load the database from the given filepath and process them as X, y and category_names
+    Input: Databased filepath
+    Output: Returns the Features X & target y along with target columns names catgeory_names
+    '''
+    table_name = 'messages_disaster'
+    engine = create_engine(f"sqlite:///{database_filepath}")
+    df = pd.read_sql_table(table_name,engine)
+    X = df["messages_disaster"]
+    y = df.drop(["message","id","genre","original"], axis=1)
+    category_names = y.columns
+    return X, y, category_names
+
 
 def tokenize(text):
-    text = text.lower()
-    text = re.sub(r"[^a-zA-Z0-1]", " ", text)
-    
-    #Tokenize
+    '''
+    Function to tokenize the text messages
+    Input: text
+    output: cleaned tokenized text as a list object
+    '''
     tokens = word_tokenize(text)
-    #Stopword
-    words = [w for w in tokens if w not in stopwords.words("english")]
-    
     lemmatizer = WordNetLemmatizer()
-
     clean_tokens = []
-    for tok in words:
+    for tok in tokens:
         clean_tok = lemmatizer.lemmatize(tok).lower().strip()
         clean_tokens.append(clean_tok)
-        
     return clean_tokens
 
+
+
 def build_model():
-
+    '''
+    Function to build a model, create pipeline, hypertuning as well as gridsearchcv
+    Input: N/A
+    Output: Returns the model
+    '''
     pipeline = Pipeline([
-                    ('vect', CountVectorizer(tokenizer=tokenize)),
-                    ('tfidf', TfidfTransformer()),
-                    ('clf', MultiOutputClassifier(RandomForestClassifier(),n_jobs=-1))
-                ])
+        ('vect', CountVectorizer()),
+        ('tfidf', TfidfTransformer()),
+        ('clf', MultiOutputClassifier(RandomForestClassifier()))])
     
-    #Lesser parameters given to save processing time
-    parameters =  {'vect__ngram_range': ((1, 1), (1, 2)),
-                   #'tfidf__use_idf': (True, False),
-                   #'clf__estimator__min_samples_split': [2, 3, 4]
-                   }
-    #Pipeline is passed on to the gridsearch
-    cv = GridSearchCV(pipeline, param_grid=parameters)
+    parameters = {
+        #'tfidf__use_idf': (True, False),
+        'clf__estimator__n_estimators': [50, 100]
+        #'clf__estimator__min_samples_split': [2, 4]
+        } 
+    cv = GridSearchCV(pipeline, param_grid=parameters)    
+    return cv
 
-    return pipeline
 
 def evaluate_model(model, X_test, Y_test, category_names):
     '''
-    Evaluates through classification report
-    Args:   Model, features, labels and category list
+    Function to evaluate a model and return the classificatio and accurancy score.
+    Inputs: Model, X_test, y_test, Catgegory_names
+    Outputs: Prints the Classification report & Accuracy Score
     '''
     y_pred = model.predict(X_test)
-    print(classification_report(Y_test, y_pred, target_names=category_names))
-    for  idx, category in enumerate(Y_test.columns.values):
-        print("{} -- {}".format(category, accuracy_score(Y_test.values[:,idx], y_pred[:, idx])))
-    print("Accuracy of the model: {}".format(accuracy_score(Y_test, y_pred)))
+    print(classification_report(y_pred, Y_test.values, target_names=category_names))
+    # print raw accuracy score 
+    print('Accuracy Score: {}'.format(np.mean(Y_test.values == y_pred)))
+    
 
 
 def save_model(model, model_filepath):
     '''
-    Save as pickle file
+    Function to save the model
+    Input: model and the file path to save the model
+    Output: save the model as pickle file in the give filepath 
     '''
-    with open(model_filepath, 'wb') as file:  
-        pickle.dump(model, file)
+    pickle.dump(model, open(model_filepath, 'wb'))
+
 
 def main():
     if len(sys.argv) == 3:
